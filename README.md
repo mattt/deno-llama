@@ -25,9 +25,6 @@ but are not yet published.
 - Apple Silicon Mac (arm64)
 - macOS 14+
 - [Deno](https://deno.land) 2.x
-- About 32 GB of unified memory for large models;
-  small models have lower requirements
-  (see [Hardware tiers](#hardware-tiers))
 
 On first use, deno-llama downloads the official
 `llama-b10344-bin-macos-arm64` release (about 11 MB),
@@ -106,6 +103,29 @@ Contexts and models use `using` / `Symbol.dispose`
 for deterministic cleanup.
 Concurrent calls on one session are serialized.
 
+## Model loading
+
+Pass a local `.gguf` path to use the file directly.
+Pass a Hugging Face repository ID
+to select and download a model through
+[`@huggingface/hub`](https://www.npmjs.com/package/@huggingface/hub).
+Downloads use the shared Hugging Face cache,
+so deno-llama, `hf`, and `huggingface-cli` can use the same files.
+Downloads resume after an interruption
+and use Xet acceleration when the Hub file is Xet-backed.
+
+Use `quant` to select a quantization
+when a repository contains multiple GGUF files.
+To select an exact file,
+use `owner/name:file.gguf`.
+For a sharded model,
+deno-llama downloads every shard and returns the path to the first one.
+
+The `revision` option accepts a branch, tag, or commit.
+For gated repositories,
+set `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`,
+or pass `accessToken`.
+
 ## FFI layer
 
 ```ts
@@ -158,18 +178,6 @@ To rebase, update `LLAMA_TAG`,
 run `deno task codegen` with clang and network access,
 update the package versions,
 and review the generated symbol table, struct layouts, and checksum.
-
-## Hardware tiers
-
-A 30B model at 4-bit quantization uses about 18-20 GB
-of unified memory before the KV cache.
-Use a Mac with at least 32 GB of memory for this model class.
-
-| Machine  | Practical tier                                 |
-| -------- | ---------------------------------------------- |
-| 8-16 GB  | 0.5B-4B models (the examples use 0.5B)         |
-| 24-32 GB | Up to about 14B, or a 30B at aggressive quant  |
-| 48-64 GB | 30B models at 4-bit with headroom for context  |
 
 ## Distribution (compiled apps)
 
