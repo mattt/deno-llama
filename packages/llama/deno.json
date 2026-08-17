@@ -1,0 +1,12 @@
+{
+  "name": "@deno-llama/llama",
+  "version": "2.10344.0",
+  "license": "MIT",
+  "exports": {
+    ".": "./mod.ts",
+    "./grammar": "./grammar/json_schema_to_gbnf.ts"
+  },
+  "publish": {
+    "exclude": ["**/*_test.ts"]
+  }
+}

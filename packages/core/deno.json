@@ -1,0 +1,9 @@
+{
+  "name": "@deno-llama/core",
+  "version": "2.10344.0",
+  "license": "MIT",
+  "exports": "./mod.ts",
+  "publish": {
+    "exclude": ["codegen/", "**/*_test.ts"]
+  }
+}

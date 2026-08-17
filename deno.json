@@ -1,0 +1,48 @@
+{
+  "workspace": [
+    "./packages/core",
+    "./packages/llama"
+  ],
+  "imports": {
+    "@huggingface/hub": "npm:@huggingface/hub@^2.14.6",
+    "@std/tar": "jsr:@std/tar@^0.1.7",
+    "@std/assert": "jsr:@std/assert@^1.0.14"
+  },
+  "permissions": {
+    "llama": {
+      "ffi": true,
+      "env": true,
+      "read": true,
+      "net": true,
+      "write": true,
+      "sys": ["homedir"]
+    }
+  },
+  "tasks": {
+    "codegen": "deno run --allow-run --allow-read --allow-write --allow-env --allow-net packages/core/codegen/generate.ts",
+    "test": "deno test -P=llama --allow-run",
+    "chat": "deno run -P=llama examples/chat.ts",
+    "cli": "deno run -P=llama --allow-run examples/cli/main.ts",
+    "judge": "deno run -P=llama examples/judge.ts",
+    "desktop": "deno run -P=llama --allow-run examples/desktop/main.ts",
+    "desktop:app": "deno desktop --backend webview -P=llama --allow-run examples/desktop/main.ts",
+    "bundle:macos": "deno run -A scripts/macos.ts bundle",
+    "compile:cli": "deno compile -P=llama --allow-run --target aarch64-apple-darwin --output dist/bin/deno-llama examples/cli/main.ts",
+    "publish:dry-run": "deno publish --dry-run --allow-dirty",
+    "bench": "deno run -P=llama scripts/bench.ts",
+    "fmt:check": "deno fmt --check",
+    "lint": "deno lint"
+  },
+  "fmt": {
+    "useTabs": false,
+    "lineWidth": 90,
+    "indentWidth": 2,
+    "semiColons": true,
+    "singleQuote": false
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"]
+    }
+  }
+}
