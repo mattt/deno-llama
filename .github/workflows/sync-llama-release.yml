@@ -1,0 +1,144 @@
+name: Sync llama.cpp Release
+
+# Detection + reminder only. deno-llama deliberately rebases onto a new
+# llama.cpp build every 4-8 weeks rather than head-chasing, so this workflow
+# never pushes to main or regenerates bindings itself (codegen needs clang +
+# network and runs locally). When a newer upstream tag exists it opens a PR
+# that bumps the package versions and reminds a maintainer to regenerate.
+
+on:
+  schedule:
+    - cron: "0 0 * * 1" # Weekly, Monday 00:00 UTC
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  sync-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    env:
+      UPDATE_NEEDED: "false"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch latest llama.cpp release
+        id: fetch_release
+        run: |
+          if ! RESPONSE=$(curl -sL -w $'\n%{http_code}' -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/ggml-org/llama.cpp/releases/latest); then
+            echo "::warning::Failed to fetch latest release from GitHub API; skipping this run."
+            exit 0
+          fi
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          RESPONSE=$(echo "$RESPONSE" | sed '$d')
+
+          case "$HTTP_CODE" in
+            2*) ;;
+            401)
+              echo "::error::GitHub API authentication failed (HTTP 401)."
+              exit 1
+              ;;
+            403)
+              # 403 is used for both rate limits and permission denials;
+              # only fail for the latter.
+              if echo "$RESPONSE" | grep -qi "rate limit"; then
+                echo "::warning::GitHub API rate limit hit (HTTP 403); skipping this run."
+                exit 0
+              fi
+              MESSAGE=$(echo "$RESPONSE" | jq -r '.message // empty' 2>/dev/null || true)
+              echo "::error::GitHub API authorization failed (HTTP 403): $MESSAGE"
+              exit 1
+              ;;
+            *)
+              echo "::warning::GitHub API returned HTTP $HTTP_CODE; skipping this run."
+              exit 0
+              ;;
+          esac
+
+          LATEST_RELEASE=$(echo "$RESPONSE" | jq -r '.tag_name')
+          if [ "$LATEST_RELEASE" = "null" ] || [ -z "$LATEST_RELEASE" ]; then
+            echo "::warning::Failed to extract tag_name from API response; skipping this run."
+            exit 0
+          fi
+
+          echo "::notice::Latest llama.cpp release: $LATEST_RELEASE"
+          echo "LATEST_RELEASE=$LATEST_RELEASE" >> "$GITHUB_ENV"
+
+      - name: Check current pinned tag
+        id: check_current
+        run: |
+          CURRENT_TAG=$(grep -oE 'llamaTag = "[^"]+"' packages/core/generated/meta.ts | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ -z "$CURRENT_TAG" ]; then
+            echo "::error::Could not extract llamaTag from packages/core/generated/meta.ts."
+            exit 1
+          fi
+          echo "::notice::Current pinned tag: $CURRENT_TAG"
+          echo "CURRENT_TAG=$CURRENT_TAG" >> "$GITHUB_ENV"
+
+      - name: Compare versions
+        id: compare_versions
+        run: |
+          if [ -z "$LATEST_RELEASE" ]; then
+            echo "::notice::Latest release unknown (fetch was skipped). No update."
+            echo "UPDATE_NEEDED=false" >> "$GITHUB_ENV"
+          elif [ "$LATEST_RELEASE" != "$CURRENT_TAG" ]; then
+            echo "::notice::New release found: $LATEST_RELEASE (current: $CURRENT_TAG)"
+            echo "UPDATE_NEEDED=true" >> "$GITHUB_ENV"
+          else
+            echo "::notice::No update needed. Current tag: $CURRENT_TAG"
+            echo "UPDATE_NEEDED=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Bump package versions
+        if: env.UPDATE_NEEDED == 'true'
+        run: |
+          # Convert release tag to semver (e.g. b10500 -> 2.10500.0).
+          BUILD_NUMBER=$(echo "$LATEST_RELEASE" | sed 's/^b//')
+          NEW_VERSION="2.${BUILD_NUMBER}.0"
+          echo "NEW_VERSION=$NEW_VERSION" >> "$GITHUB_ENV"
+          for f in packages/core/deno.json packages/llama/deno.json; do
+            sed -i -E "s/(\"version\": \")[^\"]+(\")/\1${NEW_VERSION}\2/" "$f"
+            echo "::notice::Updated $f to version $NEW_VERSION"
+          done
+
+      - name: Create pull request
+        if: env.UPDATE_NEEDED == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: sync/llama-${{ env.LATEST_RELEASE }}
+          delete-branch: true
+          commit-message: "Sync llama.cpp to ${{ env.LATEST_RELEASE }}"
+          title: "Sync llama.cpp to ${{ env.LATEST_RELEASE }}"
+          labels: dependencies
+          body: |
+            A newer llama.cpp release is available.
+
+            - Current pinned tag: `${{ env.CURRENT_TAG }}`
+            - Latest upstream tag: `${{ env.LATEST_RELEASE }}`
+
+            This PR mechanically bumps both package versions to
+            `${{ env.NEW_VERSION }}`. It does **not** regenerate the FFI
+            bindings — codegen needs clang and network access and is run
+            locally by a maintainer.
+
+            ### Before merging
+
+            Run codegen against the new tag and commit the regenerated files:
+
+            ```sh
+            LLAMA_TAG=${{ env.LATEST_RELEASE }} deno task codegen
+            deno task test
+            ```
+
+            deno-llama rebases deliberately (every 4-8 weeks), so review the
+            upstream changelog and verify the bindings before merging. Do not
+            auto-merge.
