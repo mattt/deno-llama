@@ -59,8 +59,8 @@ export class ChatSession {
   }
 
   /**
-   * Stream a reply to `userText`. The user message is added to history
-   * immediately; the assistant reply is appended once the stream completes.
+   * Stream a reply to `userText`. The first token or terminal marker adds the
+   * user message to history. Closing the stream records the reply yielded so far.
    */
   async *respond(
     userText: string,
@@ -71,15 +71,20 @@ export class ChatSession {
     // interleave (the second prompt missing the first reply). generate() runs
     // without its own lock since we already hold it.
     const release = await this.#lock.acquire(opts.signal);
-    this.#history.push({ role: "user", content: userText });
-    let reply = "";
+    const user = { role: "user", content: userText };
+    let reply: string | undefined;
     try {
       const grammar = opts.jsonSchema !== undefined
         ? jsonSchemaToGrammar(opts.jsonSchema)
         : opts.grammar;
 
       const raw = this.#model.raw;
-      const prompt = applyChatTemplate(raw, this.#model.ptr, this.#history, true);
+      const prompt = applyChatTemplate(
+        raw,
+        this.#model.ptr,
+        [...this.#history, user],
+        true,
+      );
       // The template already emits BOS/role markers, so add_special=false and let
       // parse_special=true recognize them.
       const ids = tokenize(raw, this.#model.vocab, prompt, false, true);
@@ -87,14 +92,15 @@ export class ChatSession {
       for await (
         const t of generate(raw, this.#ctx, this.#model.vocab, ids, { ...opts, grammar })
       ) {
+        if (reply === undefined) {
+          this.#history.push(user);
+          reply = "";
+        }
         reply += t.text; // content tokens and the terminal marker's flushed tail
         yield t;
       }
     } finally {
-      // Append the (possibly partial) assistant reply even if the consumer stops
-      // iterating early or generation throws — otherwise history desyncs, leaving
-      // a user turn with no matching assistant turn.
-      this.#history.push({ role: "assistant", content: reply });
+      if (reply !== undefined) this.#history.push({ role: "assistant", content: reply });
       release();
     }
   }
